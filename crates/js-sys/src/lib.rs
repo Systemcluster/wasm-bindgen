@@ -2835,6 +2835,7 @@ macro_rules! number_try_from {
             #[inline]
             fn try_from(x: $x) -> Result<Number, Self::Error> {
                 let x_f64 = x as f64;
+                #[allow(clippy::manual_range_contains)]
                 if x_f64 >= Number::MIN_SAFE_INTEGER && x_f64 <= Number::MAX_SAFE_INTEGER {
                     Ok(Number::from(x_f64))
                 } else {
