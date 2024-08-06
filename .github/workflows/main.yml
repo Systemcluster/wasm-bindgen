@@ -87,11 +87,11 @@ jobs:
     runs-on: ubuntu-latest
     env:
       WASM_BINDGEN_SPLIT_LINKED_MODULES: 1
+      RUSTC_WRAPPER: ""
     steps:
     - uses: actions/checkout@v4
     - run: rustup update --no-self-update stable && rustup default stable
     - run: rustup target add wasm32-unknown-unknown
-    - uses: mozilla-actions/sccache-action@v0.0.5
     - uses: actions/setup-node@v4
       with:
         node-version: '20'
@@ -113,12 +113,13 @@ jobs:
   test_threads:
     name: "Run wasm-bindgen crate tests with multithreading enabled"
     runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: ""
     steps:
     - uses: actions/checkout@v4
     - run: rustup default nightly-2024-07-06
     - run: rustup target add wasm32-unknown-unknown
     - run: rustup component add rust-src
-    - uses: mozilla-actions/sccache-action@v0.0.5
     # Note: we only run the browser tests here, because wasm-bindgen doesn't support threading in Node yet.
     - run: |
         RUSTFLAGS='-C target-feature=+atomics,+bulk-memory,+mutable-globals' \
@@ -305,12 +306,13 @@ jobs:
 
   build_nightly:
     runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: ""
     steps:
     - uses: actions/checkout@v4
     - run: rustup default nightly-2024-07-06
     - run: rustup target add wasm32-unknown-unknown
     - run: rustup component add rust-src
-    - uses: mozilla-actions/sccache-action@v0.0.5
     - run: |
         for dir in raytrace-parallel wasm-audio-worklet; do
           (cd examples/$dir &&
