@@ -364,6 +364,7 @@ pub async fn test_example(
             };
 
             conn.graceful_shutdown();
+            tokio::time::sleep(Duration::from_millis(100)).await;
             ret
         },
         async {
