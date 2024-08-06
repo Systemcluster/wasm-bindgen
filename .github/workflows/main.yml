@@ -18,32 +18,28 @@ concurrency:
 permissions:
   contents: read #  to fetch code (actions/checkout)
 
-env:
-  SCCACHE_GHA_ENABLED: "true"
-  RUSTC_WRAPPER: "sccache"
-
 jobs:
   # Check Code style quickly by running `rustfmt` over all code
   rustfmt:
     name: Rustfmt
     runs-on: ubuntu-latest
-    env:
-      RUSTC_WRAPPER: ""
     steps:
     - uses: actions/checkout@v4
-    - run: rustup update --no-self-update stable && rustup default stable
-    - run: rustup component add rustfmt
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        components: rustfmt
+        sccache: false
     - run: cargo fmt --all -- --check
 
   # Run `cargo check` over everything
   check:
     name: Check
     runs-on: ubuntu-latest
-    env:
-      RUSTC_WRAPPER: ""
     steps:
     - uses: actions/checkout@v4
-    - run: rustup update --no-self-update stable && rustup default stable
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        sccache: false
     - run: cargo check --all
     - run: cargo check --no-default-features
 
@@ -53,9 +49,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - run: rustup update --no-self-update stable && rustup default stable
-    - run: rustup target add wasm32-unknown-unknown
-    - uses: mozilla-actions/sccache-action@v0.0.5
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        targets: wasm32-unknown-unknown
+        components: clippy
     - run: cargo clippy --no-deps --all-features -p wasm-bindgen-backend -- -D warnings
     - run: cargo clippy --no-deps --all-features -p wasm-bindgen-cli -- -D warnings
     - run: cargo clippy --no-deps --all-features -p wasm-bindgen-cli-support -- -D warnings
@@ -82,9 +79,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - run: rustup update --no-self-update stable && rustup default stable
-    - run: rustup target add wasm32-unknown-unknown
-    - uses: mozilla-actions/sccache-action@v0.0.5
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        targets: wasm32-unknown-unknown
+        components: clippy
     - run: cargo clippy --no-deps --all-features --target wasm32-unknown-unknown -p js-sys -- -D warnings
     - run: cargo clippy --no-deps --all-features --target wasm32-unknown-unknown -p web-sys -- -D warnings
 
@@ -94,9 +92,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - run: rustup update --no-self-update stable && rustup default stable
-    - run: rustup target add wasm32-unknown-unknown
-    - uses: mozilla-actions/sccache-action@v0.0.5
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        targets: wasm32-unknown-unknown
+        components: clippy
     - run: cargo clippy --no-deps --no-default-features --target wasm32-unknown-unknown -- -D warnings
     - run: cargo clippy --no-deps --all-features --target wasm32-unknown-unknown -- -D warnings
     - run: cargo clippy --no-deps --all-features --target wasm32-unknown-unknown --tests -- -D warnings
@@ -109,9 +108,9 @@ jobs:
       WASM_BINDGEN_SPLIT_LINKED_MODULES: 1
     steps:
     - uses: actions/checkout@v4
-    - run: rustup update --no-self-update stable && rustup default stable
-    - run: rustup target add wasm32-unknown-unknown
-    - uses: mozilla-actions/sccache-action@v0.0.5
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        targets: wasm32-unknown-unknown
     - uses: actions/setup-node@v4
       with:
         node-version: '20'
@@ -128,9 +127,9 @@ jobs:
       WASM_BINDGEN_SPLIT_LINKED_MODULES: 1
     steps:
     - uses: actions/checkout@v4
-    - run: rustup update --no-self-update stable && rustup default stable
-    - run: rustup target add wasm32-unknown-unknown
-    - uses: mozilla-actions/sccache-action@v0.0.5
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        targets: wasm32-unknown-unknown
     - uses: actions/setup-node@v4
       with:
         node-version: '20'
@@ -149,10 +148,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - run: rustup default nightly-2024-07-06
-    - run: rustup target add wasm32-unknown-unknown
-    - run: rustup component add rust-src
-    - uses: mozilla-actions/sccache-action@v0.0.5
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        targets: wasm32-unknown-unknown
+        channel: nightly-2024-07-06
+        components: rust-src
     # Note: we only run the browser tests here, because wasm-bindgen doesn't support threading in Node yet.
     - run: |
         RUSTFLAGS='-C target-feature=+atomics,+bulk-memory,+mutable-globals' \
@@ -186,9 +186,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - run: rustup update --no-self-update stable && rustup default stable
-    - run: rustup target add wasm32-unknown-unknown
-    - uses: mozilla-actions/sccache-action@v0.0.5
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        targets: wasm32-unknown-unknown
     - uses: actions/setup-node@v4
       with:
         node-version: '20'
@@ -207,9 +207,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - run: rustup update --no-self-update stable && rustup default stable
-    - run: rustup target add wasm32-unknown-unknown
-    - uses: mozilla-actions/sccache-action@v0.0.5
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        targets: wasm32-unknown-unknown
     - uses: actions/setup-node@v4
       with:
         node-version: '20'
@@ -224,9 +224,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - run: rustup update --no-self-update stable && rustup default stable
-    - run: rustup target add wasm32-unknown-unknown
-    - uses: mozilla-actions/sccache-action@v0.0.5
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        targets: wasm32-unknown-unknown
     - uses: actions/setup-node@v4
       with:
         node-version: '20'
@@ -241,8 +241,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - run: rustup update --no-self-update stable && rustup default stable
-    - uses: mozilla-actions/sccache-action@v0.0.5
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        targets: wasm32-unknown-unknown
     - run: cd crates/web-sys && cargo run --release --package wasm-bindgen-webidl -- webidls src/features ./Cargo.toml
     - run: git diff --exit-code
 
@@ -251,9 +252,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - run: rustup update --no-self-update stable && rustup default stable
-    - run: rustup target add wasm32-unknown-unknown
-    - uses: mozilla-actions/sccache-action@v0.0.5
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        targets: wasm32-unknown-unknown
     - uses: actions/setup-node@v4
       with:
         node-version: '20'
@@ -268,9 +269,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - run: rustup update --no-self-update stable && rustup default stable
-    - run: rustup target add wasm32-unknown-unknown
-    - uses: mozilla-actions/sccache-action@v0.0.5
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        targets: wasm32-unknown-unknown
     - uses: actions/setup-node@v4
       with:
         node-version: '20'
@@ -289,8 +290,10 @@ jobs:
       RUSTC_WRAPPER: ""
     steps:
     - uses: actions/checkout@v4
-    - run: rustup update --no-self-update stable && rustup default stable
-    - run: rustup target add wasm32-unknown-unknown
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        targets: wasm32-unknown-unknown
+        sccache: false
     - uses: actions/setup-node@v4
       with:
         node-version: '20'
@@ -301,9 +304,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - run: rustup update --no-self-update stable && rustup default stable
-    - run: rustup target add wasm32-unknown-unknown
-    - uses: mozilla-actions/sccache-action@v0.0.5
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        targets: wasm32-unknown-unknown
+        sccache: false
     - uses: denoland/setup-deno@v1
       with:
         deno-version: v1.x
@@ -314,8 +318,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - run: rustup update --no-self-update 1.76.0 && rustup default 1.76.0
-    - uses: mozilla-actions/sccache-action@v0.0.5
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        channel: 1.76.0
+        sccache: false
     - run: cargo test -p wasm-bindgen-macro
     - run: cargo test -p wasm-bindgen-test-macro
 
@@ -325,8 +331,9 @@ jobs:
       RUSTC_WRAPPER: ""
     steps:
     - uses: actions/checkout@v4
-    - run: rustup update --no-self-update stable && rustup default stable
-    - run: rustup target add wasm32-unknown-unknown
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        targets: wasm32-unknown-unknown
     - run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh -s -- -f
     - run: |
         curl -L https://github.com/WebAssembly/binaryen/releases/download/version_112/binaryen-version_112-x86_64-linux.tar.gz -sSf > binaryen-version_112-x86_64-linux.tar.gz
@@ -354,10 +361,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - run: rustup default nightly-2024-07-06
-    - run: rustup target add wasm32-unknown-unknown
-    - run: rustup component add rust-src
-    - uses: mozilla-actions/sccache-action@v0.0.5
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        targets: wasm32-unknown-unknown
+        channel: nightly-2024-07-06
+        components: rust-src
+        sccache: false
     - run: |
         for dir in raytrace-parallel wasm-audio-worklet; do
           (cd examples/$dir &&
@@ -384,7 +393,9 @@ jobs:
       with:
         name: examples2
         path: exbuild
-    - run: rustup update --no-self-update stable && rustup default stable
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        targets: wasm32-unknown-unknown
     - run: cargo test -p example-tests
       env:
         EXBUILD: ${{ github.workspace }}/exbuild
@@ -393,12 +404,11 @@ jobs:
 
   build_benchmarks:
     runs-on: ubuntu-latest
-    env:
-      RUSTC_WRAPPER: ""
     steps:
     - uses: actions/checkout@v4
-    - run: rustup update --no-self-update stable && rustup default stable
-    - run: rustup target add wasm32-unknown-unknown
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        targets: wasm32-unknown-unknown
     - run: cargo build --manifest-path benchmarks/Cargo.toml --release --target wasm32-unknown-unknown
     - run: cargo run -p wasm-bindgen-cli -- target/wasm32-unknown-unknown/release/wasm_bindgen_benchmark.wasm --out-dir benchmarks/pkg --target web
     - uses: actions/upload-artifact@v4
@@ -408,13 +418,13 @@ jobs:
 
   dist_linux_x86_64_musl:
     runs-on: ubuntu-latest
-    env:
-      RUSTC_WRAPPER: ""
     steps:
-    - uses: actions/checkout@v4
-    - run: rustup update --no-self-update stable && rustup default stable
-    - run: rustup target add x86_64-unknown-linux-musl
     - run: sudo apt update -y && sudo apt install musl-tools -y
+    - uses: actions/checkout@v4
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        targets: x86_64-unknown-linux-musl
+        sccache: false
     - run: |
         cargo build --manifest-path crates/cli/Cargo.toml --target x86_64-unknown-linux-musl --features vendored-openssl --release
         strip -g target/x86_64-unknown-linux-musl/release/wasm-bindgen
@@ -427,13 +437,13 @@ jobs:
 
   dist_linux_aarch64_gnu:
     runs-on: ubuntu-latest
-    env:
-      RUSTC_WRAPPER: ""
     steps:
-    - uses: actions/checkout@v4
-    - run: rustup update --no-self-update stable && rustup default stable
-    - run: rustup target add aarch64-unknown-linux-gnu
     - run: sudo apt update -y && sudo apt install gcc-aarch64-linux-gnu -y
+    - uses: actions/checkout@v4
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        targets: aarch64-unknown-linux-gnu
+        sccache: false
     - run: |
         cargo build --manifest-path crates/cli/Cargo.toml --target aarch64-unknown-linux-gnu --features vendored-openssl --release
       env:
@@ -445,11 +455,12 @@ jobs:
 
   dist_macos_x86_64:
     runs-on: macos-latest
-    env:
-      RUSTC_WRAPPER: ""
     steps:
     - uses: actions/checkout@v4
-    - run: rustup update --no-self-update stable && rustup default stable
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        targets: x86_64-apple-darwin
+        sccache: false
     - run: cargo build --manifest-path crates/cli/Cargo.toml --release
       env:
         MACOSX_DEPLOYMENT_TARGET: 10.7
@@ -460,12 +471,12 @@ jobs:
 
   dist_macos_aarch64:
     runs-on: macos-latest
-    env:
-      RUSTC_WRAPPER: ""
     steps:
     - uses: actions/checkout@v4
-    - run: rustup update --no-self-update stable && rustup default stable
-    - run: rustup target add aarch64-apple-darwin
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        targets: aarch64-apple-darwin
+        sccache: false
     - run: |
         cargo build --manifest-path crates/cli/Cargo.toml --target aarch64-apple-darwin --release
       env:
@@ -477,11 +488,11 @@ jobs:
 
   dist_windows:
     runs-on: windows-latest
-    env:
-      RUSTC_WRAPPER: ""
     steps:
     - uses: actions/checkout@v4
-    - run: rustup update --no-self-update stable && rustup default stable
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        targets: x86_64-pc-windows-msvc
     - run: cargo build --manifest-path crates/cli/Cargo.toml --release
       env:
         RUSTFLAGS: -Ctarget-feature=+crt-static
@@ -509,7 +520,9 @@ jobs:
       RUSTC_WRAPPER: ""
     steps:
     - uses: actions/checkout@v4
-    - run: rustup update --no-self-update nightly && rustup default nightly
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        channel: nightly
     - run: cargo doc --no-deps --features 'serde-serialize'
     - run: cargo doc --no-deps --manifest-path crates/js-sys/Cargo.toml
     - run: cargo doc --no-deps --manifest-path crates/web-sys/Cargo.toml --all-features
@@ -534,7 +547,10 @@ jobs:
       RUSTC_WRAPPER: ""
     steps:
     - uses: actions/checkout@v4
-    - run: rustup update --no-self-update 1.57 && rustup default 1.57
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        channel: 1.57.0
+        sccache: false
     - run: cargo build
 
   msrv-cli:
@@ -547,5 +563,8 @@ jobs:
       RUSTC_WRAPPER: ""
     steps:
     - uses: actions/checkout@v4
-    - run: rustup update --no-self-update 1.76 && rustup default 1.76
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        channel: 1.76.0
+        sccache: false
     - run: cargo build
