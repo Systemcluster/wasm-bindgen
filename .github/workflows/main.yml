@@ -75,7 +75,7 @@ jobs:
 
   # Run `cargo clippy` over web-sys and js-sys crates
   clippy_web_sys:
-    name: Clippy
+    name: Clippy (web-sys)
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -88,7 +88,7 @@ jobs:
 
   # Run `cargo clippy` over the project
   clippy_project:
-    name: Clippy
+    name: Clippy (project)
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -103,6 +103,23 @@ jobs:
 
   test_wasm_bindgen:
     name: "Run wasm-bindgen crate tests (unix)"
+    runs-on: ubuntu-latest
+    env:
+      WASM_BINDGEN_SPLIT_LINKED_MODULES: 1
+    steps:
+    - uses: actions/checkout@v4
+    - uses: Systemcluster/actions@setup-rust-v0
+      with:
+        targets: wasm32-unknown-unknown
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    - uses: ./.github/actions/setup-geckodriver
+    - run: cargo test --target wasm32-unknown-unknown
+    - run: cargo test --target wasm32-unknown-unknown -p wasm-bindgen-futures
+
+  test_wasm_bindgen_features:
+    name: "Run wasm-bindgen crate tests with different features"
     runs-on: ubuntu-latest
     env:
       WASM_BINDGEN_SPLIT_LINKED_MODULES: 1
