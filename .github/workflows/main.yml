@@ -247,10 +247,14 @@ jobs:
   test_web_sys_all_features_unstable:
     name: "Run web-sys crate tests with all features and unstable APIs"
     runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "true"
     steps:
     - uses: actions/checkout@v4
     - run: rustup update --no-self-update stable && rustup default stable
     - run: rustup target add wasm32-unknown-unknown
+    - uses: mozilla-actions/sccache-action@v0.0.5
     - uses: actions/setup-node@v4
       with:
         node-version: '20'
