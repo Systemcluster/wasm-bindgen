@@ -1,10 +1,10 @@
 name: CI
 on:
   push:
-    branches: [main]
     tags-ignore: [dev]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 defaults:
   run:
     shell: bash
@@ -448,7 +448,7 @@ jobs:
     - uses: actions/checkout@v4
     - run: rustup update --no-self-update 1.57 && rustup default 1.57
     - run: cargo build
-      
+
   msrv-cli:
     name: Check MSRV for CLI tools
     runs-on: ubuntu-latest
@@ -459,88 +459,3 @@ jobs:
     - uses: actions/checkout@v4
     - run: rustup update --no-self-update 1.76 && rustup default 1.76
     - run: cargo build
-      
-
-  deploy:
-    permissions:
-      contents: write #  to push changes in repo (jamesives/github-pages-deploy-action)
-
-    needs:
-      - doc_api
-      - doc_book
-      - dist_linux_x86_64_musl
-      - dist_linux_aarch64_gnu
-      - dist_macos_x86_64
-      - dist_macos_aarch64
-      - dist_windows
-      - build_examples
-      - build_nightly
-      - build_benchmarks
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-    - uses: actions/download-artifact@v4
-      with:
-        path: artifacts
-    - run: find artifacts
-    - run: |
-        set -ex
-        mkdir -p gh-release
-        tag=`git describe --tags`
-        mk() {
-          target=$1
-          src=$2
-          name=wasm-bindgen-$tag-$target
-          mkdir -p tmp/$name
-          rm -f artifacts/$src/*.d
-          rm -f artifacts/$src/*.pdb
-          cp README.md \
-            LICENSE-MIT \
-            LICENSE-APACHE \
-            artifacts/$src/wasm* \
-            tmp/$name/
-          chmod +x tmp/$name/wasm*
-          tar czvf gh-release/$name.tar.gz -C tmp $name
-          sha256sum gh-release/$name.tar.gz > gh-release/$name.tar.gz.sha256sum
-        }
-        mk x86_64-unknown-linux-musl dist_linux_x86_64_musl
-        mk aarch64-unknown-linux-gnu dist_linux_aarch64_gnu
-        mk x86_64-apple-darwin dist_macos_x86_64
-        mk aarch64-apple-darwin dist_macos_aarch64
-        mk x86_64-pc-windows-msvc dist_windows
-    - uses: actions/upload-artifact@v4
-      with:
-        name: gh-release
-        path: gh-release
-    - run: |
-        mv artifacts/doc_book gh-pages
-        tar xf artifacts/doc_api/docs.tar.gz
-        mv target/doc gh-pages/api
-        mv artifacts/examples1 gh-pages/exbuild
-        mv artifacts/examples2/* gh-pages/exbuild
-        mv artifacts/benchmarks gh-pages/benchmarks
-        tar czf gh-pages.tar.gz gh-pages
-    - uses: actions/upload-artifact@v4
-      with:
-        name: gh-pages
-        path: gh-pages.tar.gz
-    - uses: JamesIves/github-pages-deploy-action@v4
-      with:
-        branch: gh-pages
-        folder: gh-pages
-        single-commit: true
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    - uses: softprops/action-gh-release@v1
-      if: startsWith(github.ref, 'refs/tags/')
-      with:
-        files: "gh-release/*.tar.gz*"
-    - uses: dtolnay/rust-toolchain@stable
-      if: startsWith(github.ref, 'refs/tags/')
-    - run: rustc publish.rs
-      if: startsWith(github.ref, 'refs/tags/')
-    - run: ./publish publish
-      if: startsWith(github.ref, 'refs/tags/')
-      env:
-        CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_PUBLISH_TOKEN }}
