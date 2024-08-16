@@ -1,4 +1,3 @@
-use crate::descriptor::VectorKind;
 use crate::intrinsic::Intrinsic;
 use crate::wit::{
     Adapter, AdapterId, AdapterJsImportKind, AdapterType, AuxExportedMethodKind, AuxReceiverKind,
@@ -7,7 +6,8 @@ use crate::wit::{
 use crate::wit::{AdapterKind, Instruction, InstructionData};
 use crate::wit::{AuxEnum, AuxExport, AuxExportKind, AuxImport, AuxStruct};
 use crate::wit::{JsImport, JsImportName, NonstandardWitSection, WasmBindgenAux};
-use crate::{reset_indentation, Bindgen, EncodeInto, OutputMode, PLACEHOLDER_MODULE};
+use crate::{descriptor::VectorKind, wrapper};
+use crate::{reset_indentation, Bindgen, EncodeInto, Preset, PLACEHOLDER_MODULE};
 use anyhow::{anyhow, bail, Context as _, Error};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -25,7 +25,7 @@ pub struct Context<'a> {
     typescript: String,
     exposed_globals: Option<HashSet<Cow<'static, str>>>,
     next_export_idx: usize,
-    config: &'a Bindgen,
+    pub config: &'a Bindgen,
     pub module: &'a mut Module,
     aux: &'a WasmBindgenAux,
     wit: &'a NonstandardWitSection,
@@ -34,10 +34,10 @@ pub struct Context<'a> {
     /// glue. The key is the module we're importing from and the value is the
     /// list of identifier we're importing from the module, with optional
     /// renames for each identifier.
-    js_imports: HashMap<String, Vec<(String, Option<String>)>>,
+    pub js_imports: HashMap<String, Vec<(String, Option<String>)>>,
 
-    /// A map of each Wasm import and what JS to hook up to it.
-    wasm_import_definitions: HashMap<ImportId, String>,
+    /// A map of each wasm import and what JS to hook up to it.
+    pub wasm_import_definitions: HashMap<ImportId, String>,
 
     /// A map from an import to the name we've locally imported it as.
     imported_names: HashMap<JsImportName, String>,
@@ -141,25 +141,24 @@ impl<'a> Context<'a> {
         if let Some(c) = comments {
             self.globals.push_str(c);
         }
-        let global = match self.config.mode {
-            OutputMode::Node { module: false } => {
+        let global = match self.config.wrapper.import_kind {
+            wrapper::ImportKind::Node
+                if self.config.wrapper.module_kind == wrapper::ModuleKind::CommonJS =>
+            {
                 if contents.starts_with("class") {
                     format!("{}\nmodule.exports.{1} = {1};\n", contents, export_name)
                 } else {
                     format!("module.exports.{} = {};\n", export_name, contents)
                 }
             }
-            OutputMode::NoModules { .. } => {
+            wrapper::ImportKind::NoModules { .. } => {
                 if contents.starts_with("class") {
                     format!("{}\n__exports.{1} = {1};\n", contents, export_name)
                 } else {
                     format!("__exports.{} = {};\n", export_name, contents)
                 }
             }
-            OutputMode::Bundler { .. }
-            | OutputMode::Node { module: true }
-            | OutputMode::Web
-            | OutputMode::Deno => {
+            _ => {
                 if let Some(body) = contents.strip_prefix("function") {
                     if export_name == definition_name {
                         format!("export function {}{}\n", export_name, body)
@@ -182,30 +181,20 @@ impl<'a> Context<'a> {
         Ok(())
     }
 
-    pub fn finalize(
-        &mut self,
-        module_name: &str,
-    ) -> Result<(String, String, Option<String>), Error> {
+    pub fn finalize(&mut self) -> Result<(), Error> {
         // Finalize all bindings for JS classes. This is where we'll generate JS
         // glue for all classes as well as finish up a few final imports like
         // `__wrap` and such.
         self.write_classes()?;
 
-        // Initialization is just flat out tricky and not something we
-        // understand super well. To try to handle various issues that have come
-        // up we always remove the `start` function if one is present. The JS
-        // bindings glue then manually calls the start function (if it was
-        // previously present).
-        let needs_manual_start = self.unstart_start_function();
-
         // Cause any future calls to `should_write_global` to panic, making sure
         // we don't ask for items which we can no longer emit.
         drop(self.exposed_globals.take().unwrap());
 
-        self.finalize_js(module_name, needs_manual_start)
+        Ok(())
     }
 
-    fn generate_node_imports(&self) -> String {
+    pub fn generate_node_imports(&self) -> String {
         let mut imports = BTreeSet::new();
         for import in self.module.imports.iter() {
             imports.insert(&import.module);
@@ -215,7 +204,7 @@ impl<'a> Context<'a> {
 
         shim.push_str("\nlet imports = {};\n");
 
-        if self.config.mode.uses_es_modules() {
+        if self.config.wrapper.module_kind == wrapper::ModuleKind::ESModule {
             for (i, module) in imports.iter().enumerate() {
                 if module.as_str() != PLACEHOLDER_MODULE {
                     shim.push_str(&format!("import * as import{} from '{}';\n", i, module));
@@ -242,10 +231,10 @@ impl<'a> Context<'a> {
         reset_indentation(&shim)
     }
 
-    fn generate_node_wasm_loading(&self, path: &Path) -> String {
+    pub fn generate_node_wasm_loading(&self, path: &Path) -> String {
         let mut shim = String::new();
 
-        if self.config.mode.uses_es_modules() {
+        if self.config.wrapper.module_kind == wrapper::ModuleKind::ESModule {
             // On windows skip the leading `/` which comes out when we parse a
             // url to use `C:\...` instead of `\C:\...`
             shim.push_str(&format!(
@@ -305,7 +294,7 @@ impl<'a> Context<'a> {
     //   './snippets/deno-65e2634a84cc3c14/inline1.js': import0,
     // }
     // ```
-    fn generate_deno_imports(&self) -> (String, String) {
+    pub fn generate_deno_imports(&self) -> (String, String) {
         let mut imports = String::new();
         let mut wasm_import_object = "const imports = {\n".to_string();
 
@@ -335,7 +324,7 @@ impl<'a> Context<'a> {
         (imports, wasm_import_object)
     }
 
-    fn generate_deno_wasm_loading(&self, module_name: &str) -> String {
+    pub fn generate_deno_wasm_loading(&self, module_name: &str) -> String {
         // Deno removed support for .wasm imports in https://github.com/denoland/deno/pull/5135
         // the issue for bringing it back is https://github.com/denoland/deno/issues/5609.
         format!(
@@ -358,262 +347,6 @@ impl<'a> Context<'a> {
             export const __wasm = wasm;",
             module_name = module_name
         )
-    }
-
-    /// Performs the task of actually generating the final JS module, be it
-    /// `--target no-modules`, `--target web`, or for bundlers. This is the very
-    /// last step performed in `finalize`.
-    fn finalize_js(
-        &mut self,
-        module_name: &str,
-        needs_manual_start: bool,
-    ) -> Result<(String, String, Option<String>), Error> {
-        let mut ts;
-        let mut js = String::new();
-        let mut start = None;
-
-        if let OutputMode::NoModules { global } = &self.config.mode {
-            js.push_str(&format!("let {};\n(function() {{\n", global));
-        }
-
-        // Depending on the output mode, generate necessary glue to actually
-        // import the Wasm file in one way or another.
-        let mut init = (String::new(), String::new());
-        let mut footer = String::new();
-        let mut imports = self.js_import_header()?;
-        match &self.config.mode {
-            // In `--target no-modules` mode we need to both expose a name on
-            // the global object as well as generate our own custom start
-            // function.
-            // `document.currentScript` property can be null in browser extensions
-            OutputMode::NoModules { global } => {
-                js.push_str("const __exports = {};\n");
-                js.push_str("let script_src;\n");
-                js.push_str(
-                    "\
-                    if (typeof document !== 'undefined' && document.currentScript !== null) {
-                        script_src = new URL(document.currentScript.src, location.href).toString();
-                    }\n",
-                );
-                js.push_str("let wasm = undefined;\n");
-                init = self.gen_init(needs_manual_start, None)?;
-                footer.push_str(&format!(
-                    "{} = Object.assign(__wbg_init, {{ initSync }}, __exports);\n",
-                    global
-                ));
-            }
-
-            // With normal CommonJS node we need to defer requiring the wasm
-            // until the end so most of our own exports are hooked up
-            OutputMode::Node { module: false } => {
-                js.push_str(&self.generate_node_imports());
-
-                js.push_str("let wasm;\n");
-
-                for (id, js) in crate::sorted_iter(&self.wasm_import_definitions) {
-                    let import = self.module.imports.get_mut(*id);
-                    footer.push_str("\nmodule.exports.");
-                    footer.push_str(&import.name);
-                    footer.push_str(" = ");
-                    footer.push_str(js.trim());
-                    footer.push_str(";\n");
-                }
-
-                footer.push_str(
-                    &self.generate_node_wasm_loading(Path::new(&format!(
-                        "./{}_bg.wasm",
-                        module_name
-                    ))),
-                );
-
-                if needs_manual_start {
-                    footer.push_str("\nwasm.__wbindgen_start();\n");
-                }
-            }
-
-            OutputMode::Deno => {
-                let (js_imports, wasm_import_object) = self.generate_deno_imports();
-                imports.push_str(&js_imports);
-                footer.push_str(&wasm_import_object);
-
-                footer.push_str(&self.generate_deno_wasm_loading(module_name));
-
-                footer.push_str("\n\n");
-
-                if needs_manual_start {
-                    footer.push_str("\nwasm.__wbindgen_start();\n");
-                }
-            }
-
-            // With Bundlers we can simply import the Wasm file as if it were an ES module
-            // and let the bundler/runtime take care of it.
-            // With Node we manually read the Wasm file from the filesystem and instantiate it.
-            OutputMode::Bundler { .. } | OutputMode::Node { module: true } => {
-                for (id, js) in crate::sorted_iter(&self.wasm_import_definitions) {
-                    let import = self.module.imports.get_mut(*id);
-                    import.module = format!("./{}_bg.js", module_name);
-                    if let Some(body) = js.strip_prefix("function") {
-                        footer.push_str("\nexport function ");
-                        footer.push_str(&import.name);
-                        footer.push_str(body.trim());
-                        footer.push_str(";\n");
-                    } else {
-                        footer.push_str("\nexport const ");
-                        footer.push_str(&import.name);
-                        footer.push_str(" = ");
-                        footer.push_str(js.trim());
-                        footer.push_str(";\n");
-                    }
-                }
-
-                self.imports_post.push_str(
-                    "\
-                    let wasm;
-                    export function __wbg_set_wasm(val) {
-                        wasm = val;
-                    }
-                    ",
-                );
-
-                if matches!(self.config.mode, OutputMode::Node { module: true }) {
-                    let start = start.get_or_insert_with(String::new);
-                    start.push_str(&self.generate_node_imports());
-                    start.push_str(&self.generate_node_wasm_loading(Path::new(&format!(
-                        "./{}_bg.wasm",
-                        module_name
-                    ))));
-                }
-                if needs_manual_start {
-                    start
-                        .get_or_insert_with(String::new)
-                        .push_str("\nwasm.__wbindgen_start();\n");
-                }
-            }
-
-            // With a browser-native output we're generating an ES module, but
-            // browsers don't support natively importing Wasm right now so we
-            // expose the same initialization function as `--target no-modules`
-            // as the default export of the module.
-            OutputMode::Web => {
-                self.imports_post.push_str("let wasm;\n");
-                init = self.gen_init(needs_manual_start, Some(&mut imports))?;
-                footer.push_str("export { initSync };\n");
-                footer.push_str("export default __wbg_init;");
-            }
-        }
-
-        // Before putting the static init code declaration info, put all existing typescript into a `wasm_bindgen` namespace declaration.
-        // Not sure if this should happen in all cases, so just adding it to NoModules for now...
-        if self.config.mode.no_modules() {
-            ts = String::from("declare namespace wasm_bindgen {\n\t");
-            ts.push_str(&self.typescript.replace('\n', "\n\t"));
-            ts.push_str("\n}\n");
-        } else {
-            ts = self.typescript.clone();
-        }
-
-        let (init_js, init_ts) = init;
-
-        ts.push_str(&init_ts);
-
-        // Emit all the JS for importing all our functionality
-        assert!(
-            !self.config.mode.uses_es_modules() || js.is_empty(),
-            "ES modules require imports to be at the start of the file, but we \
-             generated some JS before the imports: {}",
-            js
-        );
-
-        let mut push_with_newline = |s| {
-            js.push_str(s);
-            if !s.is_empty() {
-                js.push('\n');
-            }
-        };
-
-        push_with_newline(&imports);
-        push_with_newline(&self.imports_post);
-
-        // Emit all our exports from this module
-        push_with_newline(&self.globals);
-
-        // Generate the initialization glue, if there was any
-        push_with_newline(&init_js);
-        push_with_newline(&footer);
-        if self.config.mode.no_modules() {
-            js.push_str("})();\n");
-        }
-
-        while js.contains("\n\n\n") {
-            js = js.replace("\n\n\n", "\n\n");
-        }
-
-        Ok((js, ts, start))
-    }
-
-    fn js_import_header(&self) -> Result<String, Error> {
-        let mut imports = String::new();
-
-        if self.config.omit_imports {
-            return Ok(imports);
-        }
-
-        match &self.config.mode {
-            OutputMode::NoModules { .. } => {
-                if let Some((module, _items)) = self.js_imports.iter().next() {
-                    bail!(
-                        "importing from `{}` isn't supported with `--target no-modules`",
-                        module
-                    );
-                }
-            }
-
-            OutputMode::Node { module: false } => {
-                for (module, items) in crate::sorted_iter(&self.js_imports) {
-                    imports.push_str("const { ");
-                    for (i, (item, rename)) in items.iter().enumerate() {
-                        if i > 0 {
-                            imports.push_str(", ");
-                        }
-                        imports.push_str(item);
-                        if let Some(other) = rename {
-                            imports.push_str(": ");
-                            imports.push_str(other)
-                        }
-                    }
-                    if module.starts_with('.') || PathBuf::from(module).is_absolute() {
-                        imports.push_str(" } = require(String.raw`");
-                    } else {
-                        imports.push_str(" } = require(`");
-                    }
-                    imports.push_str(module);
-                    imports.push_str("`);\n");
-                }
-            }
-
-            OutputMode::Bundler { .. }
-            | OutputMode::Node { module: true }
-            | OutputMode::Web
-            | OutputMode::Deno => {
-                for (module, items) in crate::sorted_iter(&self.js_imports) {
-                    imports.push_str("import { ");
-                    for (i, (item, rename)) in items.iter().enumerate() {
-                        if i > 0 {
-                            imports.push_str(", ");
-                        }
-                        imports.push_str(item);
-                        if let Some(other) = rename {
-                            imports.push_str(" as ");
-                            imports.push_str(other)
-                        }
-                    }
-                    imports.push_str(" } from '");
-                    imports.push_str(module);
-                    imports.push_str("';\n");
-                }
-            }
-        }
-        Ok(imports)
     }
 
     fn ts_for_init_fn(
@@ -643,7 +376,7 @@ impl<'a> Context<'a> {
         let setup_function_declaration;
         let mut sync_init_function = String::new();
         let declare_or_export;
-        if self.config.mode.no_modules() {
+        if self.config.wrapper.import_kind == wrapper::ImportKind::NoModules {
             declare_or_export = "declare";
             setup_function_declaration = "declare function wasm_bindgen";
         } else {
@@ -696,7 +429,7 @@ impl<'a> Context<'a> {
         ))
     }
 
-    fn gen_init(
+    pub fn gen_init(
         &mut self,
         needs_manual_start: bool,
         mut imports: Option<&mut String>,
@@ -726,15 +459,15 @@ impl<'a> Context<'a> {
         }
 
         let default_module_path = if !self.config.omit_default_module_path {
-            match self.config.mode {
-                OutputMode::Web => format!(
+            match self.config.wrapper.import_kind {
+                wrapper::ImportKind::Web => format!(
                     "\
                     if (typeof module_or_path === 'undefined') {{
                         module_or_path = new URL('{stem}_bg.wasm', import.meta.url);
                     }}",
                     stem = self.config.stem()?
                 ),
-                OutputMode::NoModules { .. } => "\
+                wrapper::ImportKind::NoModules { .. } => "\
                     if (typeof module_or_path === 'undefined' && typeof script_src !== 'undefined') {
                         module_or_path = script_src.replace(/\\.js$/, '_bg.wasm');
                     }"
@@ -1043,7 +776,7 @@ impl<'a> Context<'a> {
             */\n  toString(): string;\n",
             );
 
-            if self.config.mode.nodejs() {
+            if self.config.wrapper.import_kind == wrapper::ImportKind::Node {
                 // `util.inspect` must be imported in Node.js to define [inspect.custom]
                 let module_name = self.import_name(&JsImport {
                     name: JsImportName::Module {
@@ -1521,8 +1254,8 @@ impl<'a> Context<'a> {
         args: &str,
         init: Option<&str>,
     ) -> Result<(), Error> {
-        match &self.config.mode {
-            OutputMode::Node { .. } => {
+        match &self.config.wrapper.import_kind {
+            wrapper::ImportKind::Node { .. } => {
                 let name = self.import_name(&JsImport {
                     name: JsImportName::Module {
                         module: "util".to_string(),
@@ -1532,40 +1265,16 @@ impl<'a> Context<'a> {
                 })?;
                 self.global(&format!("let cached{} = new {}{};", s, name, args));
             }
-            OutputMode::Bundler {
-                browser_only: false,
-            } => {
-                self.global(&format!(
-                    "
-                    const l{0} = typeof {0} === 'undefined' ? \
-                        (0, module.require)('util').{0} : {0};\
-                ",
-                    s
-                ));
-                self.global(&format!("let cached{0} = new l{0}{1};", s, args));
-            }
-            OutputMode::Deno
-            | OutputMode::Web
-            | OutputMode::NoModules { .. }
-            | OutputMode::Bundler { browser_only: true } => {
+            _ => {
                 self.global(&format!("const cached{0} = (typeof {0} !== 'undefined' ? new {0}{1} : {{ {2}: () => {{ throw Error('{0} not available') }} }} );", s, args, op))
             }
         };
 
         if let Some(init) = init {
-            match &self.config.mode {
-                OutputMode::Node { .. }
-                | OutputMode::Bundler {
-                    browser_only: false,
-                } => self.global(init),
-                OutputMode::Deno
-                | OutputMode::Web
-                | OutputMode::NoModules { .. }
-                | OutputMode::Bundler { browser_only: true } => self.global(&format!(
-                    "if (typeof {} !== 'undefined') {{ {} }};",
-                    s, init
-                )),
-            }
+            self.global(&format!(
+                "if (typeof {} !== 'undefined') {{ {} }};",
+                s, init
+            ));
         }
 
         Ok(())
@@ -2395,7 +2104,7 @@ impl<'a> Context<'a> {
     /// If a start function is present, it removes it from the `start` section
     /// of the Wasm module and then moves it to an exported function, named
     /// `__wbindgen_start`.
-    fn unstart_start_function(&mut self) -> bool {
+    pub fn unstart_start_function(&mut self) -> bool {
         let start = match self.module.start.take() {
             Some(id) => id,
             None => return false,
@@ -3239,15 +2948,9 @@ impl<'a> Context<'a> {
                 assert!(!variadic);
                 assert_eq!(args.len(), 0);
                 if self.config.split_linked_modules {
-                    let base = match self.config.mode {
-                        OutputMode::Web
-                        | OutputMode::Bundler { .. }
-                        | OutputMode::Deno
-                        | OutputMode::Node { module: true } => "import.meta.url",
-                        OutputMode::Node { module: false } => {
-                            "require('url').pathToFileURL(__filename)"
-                        }
-                        OutputMode::NoModules { .. } => {
+                    let base = match self.config.wrapper.module_kind {
+                        wrapper::ModuleKind::CommonJS => "require('url').pathToFileURL(__filename)",
+                        _ if self.config.wrapper.import_kind == wrapper::ImportKind::NoModules => {
                             prelude.push_str(
                                 "if (script_src === undefined) {
                                     throw new Error(
@@ -3260,6 +2963,7 @@ impl<'a> Context<'a> {
                             );
                             "script_src"
                         }
+                        _ => "import.meta.url",
                     };
                     Ok(format!("new URL('{}', {}).toString()", path, base))
                 } else if let Some(content) = content {
@@ -3587,7 +3291,9 @@ impl<'a> Context<'a> {
 
             Intrinsic::Module => {
                 assert_eq!(args.len(), 0);
-                if !self.config.mode.no_modules() && !self.config.mode.web() {
+                if self.config.wrapper.import_kind != wrapper::ImportKind::NoModules
+                    && self.config.wrapper.import_kind != wrapper::ImportKind::Web
+                {
                     bail!(
                         "`wasm_bindgen::module` is currently only supported with \
                          `--target no-modules` and `--target web`"
@@ -3776,7 +3482,7 @@ impl<'a> Context<'a> {
     }
 
     fn process_package_json(&mut self, path: &Path) -> Result<(), Error> {
-        if self.config.mode.no_modules() {
+        if self.config.wrapper.import_kind == wrapper::ImportKind::NoModules {
             bail!(
                 "NPM dependencies have been specified in `{}` but \
                  this is incompatible with the `no-modules` target",

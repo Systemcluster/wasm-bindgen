@@ -20,11 +20,12 @@ mod js;
 mod multivalue;
 pub mod wasm2es6js;
 mod wit;
+mod wrapper;
 
 pub struct Bindgen {
     input: Input,
-    out_name: Option<String>,
-    mode: OutputMode,
+    wrapper: wrapper::Wrapper,
+    verify: Vec<Verify>,
     debug: bool,
     typescript: bool,
     omit_imports: bool,
@@ -47,11 +48,11 @@ pub struct Bindgen {
 pub struct Output {
     module: walrus::Module,
     stem: String,
-    generated: Generated,
+    generated: wrapper::WrapperOutput,
 }
 
-struct Generated {
-    mode: OutputMode,
+struct Generated_ {
+    mode: Preset,
     js: String,
     ts: String,
     start: Option<String>,
@@ -62,10 +63,10 @@ struct Generated {
 }
 
 #[derive(Clone)]
-enum OutputMode {
-    Bundler { browser_only: bool },
+pub enum Preset {
+    Bundler,
     Web,
-    NoModules { global: String },
+    NoModules { global: Option<String> },
     Node { module: bool },
     Deno,
 }
@@ -75,6 +76,10 @@ enum Input {
     Module(Module, String),
     Bytes(Vec<u8>, String),
     None,
+}
+
+enum Verify {
+    NoExport(String),
 }
 
 pub enum EncodeInto {
@@ -90,10 +95,8 @@ impl Bindgen {
         let multi_value = env::var("WASM_BINDGEN_MULTI_VALUE").is_ok();
         Bindgen {
             input: Input::None,
-            out_name: None,
-            mode: OutputMode::Bundler {
-                browser_only: false,
-            },
+            wrapper: wrapper::Wrapper::default(),
+            verify: Vec::default(),
             debug: false,
             typescript: false,
             omit_imports: false,
@@ -118,7 +121,7 @@ impl Bindgen {
     }
 
     pub fn out_name(&mut self, name: &str) -> &mut Bindgen {
-        self.out_name = Some(name.to_string());
+        self.wrapper.name = Some(name.to_string());
         self
     }
 
@@ -141,88 +144,131 @@ impl Bindgen {
         self
     }
 
-    fn switch_mode(&mut self, mode: OutputMode, flag: &str) -> Result<(), Error> {
-        match self.mode {
-            OutputMode::Bundler { .. } => self.mode = mode,
-            _ => bail!(
-                "cannot specify `{}` with another output mode already specified",
-                flag
-            ),
-        }
-        Ok(())
-    }
-
-    pub fn nodejs(&mut self, node: bool) -> Result<&mut Bindgen, Error> {
-        if node {
-            self.switch_mode(OutputMode::Node { module: false }, "--target nodejs")?;
-        }
-        Ok(self)
-    }
-
-    pub fn nodejs_module(&mut self, node: bool) -> Result<&mut Bindgen, Error> {
-        if node {
-            self.switch_mode(
-                OutputMode::Node { module: true },
-                "--target experimental-nodejs-module",
-            )?;
-        }
-        Ok(self)
-    }
-
-    pub fn bundler(&mut self, bundler: bool) -> Result<&mut Bindgen, Error> {
-        if bundler {
-            self.switch_mode(
-                OutputMode::Bundler {
-                    browser_only: false,
-                },
-                "--target bundler",
-            )?;
-        }
-        Ok(self)
-    }
-
-    pub fn web(&mut self, web: bool) -> Result<&mut Bindgen, Error> {
-        if web {
-            self.switch_mode(OutputMode::Web, "--target web")?;
-        }
-        Ok(self)
-    }
-
-    pub fn no_modules(&mut self, no_modules: bool) -> Result<&mut Bindgen, Error> {
-        if no_modules {
-            self.switch_mode(
-                OutputMode::NoModules {
-                    global: "wasm_bindgen".to_string(),
-                },
-                "--target no-modules",
-            )?;
-        }
-        Ok(self)
-    }
-
-    pub fn browser(&mut self, browser: bool) -> Result<&mut Bindgen, Error> {
-        if browser {
-            match &mut self.mode {
-                OutputMode::Bundler { browser_only } => *browser_only = true,
-                _ => bail!("cannot specify `--browser` with other output types"),
+    /// Specify the output format of the generated bindings.
+    pub fn preset(&mut self, preset: Preset) -> &mut Bindgen {
+        self.verify.clear();
+        match preset {
+            Preset::Bundler => {
+                self.wrapper.module_kind = wrapper::ModuleKind::ESModule;
+                self.wrapper.import_kind = wrapper::ImportKind::Bundler;
+                self.wrapper.extension_kind = wrapper::ExtensionKind::Common;
+            }
+            Preset::Web => {
+                self.wrapper.module_kind = wrapper::ModuleKind::ESModule;
+                self.wrapper.import_kind = wrapper::ImportKind::Bundler;
+                self.wrapper.extension_kind = wrapper::ExtensionKind::ModuleSpecific;
+            }
+            Preset::NoModules { global } => {
+                self.wrapper.module_kind = wrapper::ModuleKind::CommonJS;
+                self.wrapper.import_kind = wrapper::ImportKind::Node;
+                self.wrapper.extension_kind = wrapper::ExtensionKind::Common;
+                if let Some(global) = global {
+                    self.wrapper.name = Some(global);
+                } else {
+                    self.wrapper.name = Some("wasm_bindgen".to_string());
+                }
+            }
+            Preset::Node { module } => {
+                self.wrapper.module_kind = match module {
+                    true => wrapper::ModuleKind::ESModule,
+                    false => wrapper::ModuleKind::CommonJS,
+                };
+                self.wrapper.import_kind = wrapper::ImportKind::Node;
+                self.wrapper.extension_kind = wrapper::ExtensionKind::Common;
+            }
+            Preset::Deno => {
+                self.wrapper.module_kind = wrapper::ModuleKind::ESModule;
+                self.wrapper.import_kind = wrapper::ImportKind::Bundler;
+                self.wrapper.extension_kind = wrapper::ExtensionKind::ModuleSpecific;
             }
         }
+        self
+    }
+
+    /// Specify the module kind of the generated bindings.
+    pub fn module_kind(&mut self, kind: wrapper::ModuleKind) -> &mut Bindgen {
+        self.wrapper.module_kind = kind;
+        self
+    }
+
+    /// Specify the import kind of the generated bindings.
+    pub fn import_kind(&mut self, kind: wrapper::ImportKind) -> &mut Bindgen {
+        self.wrapper.import_kind = kind;
+        self
+    }
+
+    /// Specify the extension kind of the generated bindings.
+    pub fn extension_kind(&mut self, kind: wrapper::ExtensionKind) -> &mut Bindgen {
+        self.wrapper.extension_kind = kind;
+        self
+    }
+
+    #[deprecated(since = "0.3.0", note = "use `preset` instead")]
+    pub fn nodejs(&mut self, node: bool) -> Result<&mut Bindgen, Error> {
+        if node {
+            self.preset(Preset::Node { module: false });
+        }
         Ok(self)
     }
 
+    #[deprecated(since = "0.3.0", note = "use `preset` instead")]
+    pub fn nodejs_module(&mut self, node: bool) -> Result<&mut Bindgen, Error> {
+        if node {
+            self.preset(Preset::Node { module: true });
+        }
+        Ok(self)
+    }
+
+    #[deprecated(since = "0.3.0", note = "use `preset` instead")]
+    pub fn bundler(&mut self, bundler: bool) -> Result<&mut Bindgen, Error> {
+        if bundler {
+            self.preset(Preset::Bundler);
+        }
+        Ok(self)
+    }
+
+    #[deprecated(since = "0.3.0", note = "use `preset` instead")]
+    pub fn web(&mut self, web: bool) -> Result<&mut Bindgen, Error> {
+        if web {
+            self.preset(Preset::Web);
+        }
+        // Check that no exported symbol is called "default" if we target web.
+        self.verify.push(Verify::NoExport("default".to_string()));
+        Ok(self)
+    }
+
+    #[deprecated(since = "0.3.0", note = "use `preset` instead")]
+    pub fn no_modules(&mut self, no_modules: bool) -> Result<&mut Bindgen, Error> {
+        if no_modules {
+            self.preset(Preset::NoModules {
+                global: Some("wasm_bindgen".to_string()),
+            });
+        }
+        Ok(self)
+    }
+
+    #[deprecated(since = "0.3.0", note = "use `preset` instead")]
+    pub fn browser(&mut self, browser: bool) -> Result<&mut Bindgen, Error> {
+        if browser {
+            self.preset(Preset::Bundler);
+        }
+        Ok(self)
+    }
+
+    #[deprecated(since = "0.3.0", note = "use `preset` instead")]
     pub fn deno(&mut self, deno: bool) -> Result<&mut Bindgen, Error> {
         if deno {
-            self.switch_mode(OutputMode::Deno, "--target deno")?;
+            self.preset(Preset::Deno);
             self.encode_into(EncodeInto::Always);
         }
         Ok(self)
     }
 
+    #[deprecated(since = "0.3.0", note = "use `preset` instead")]
     pub fn no_modules_global(&mut self, name: &str) -> Result<&mut Bindgen, Error> {
-        match &mut self.mode {
-            OutputMode::NoModules { global } => *global = name.to_string(),
-            _ => bail!("can only specify `--no-modules-global` with `--target no-modules`"),
-        }
+        self.preset(Preset::NoModules {
+            global: Some(name.to_string()),
+        });
         Ok(self)
     }
 
@@ -294,7 +340,7 @@ impl Bindgen {
         Ok(match &self.input {
             Input::None => bail!("must have an input by now"),
             Input::Module(_, name) | Input::Bytes(_, name) => name,
-            Input::Path(path) => match &self.out_name {
+            Input::Path(path) => match &self.wrapper.name {
                 Some(name) => name,
                 None => path.file_stem().unwrap().to_str().unwrap(),
             },
@@ -320,11 +366,14 @@ impl Bindgen {
                 .context("failed getting Wasm module")?,
         };
 
-        // Check that no exported symbol is called "default" if we target web.
-        if matches!(self.mode, OutputMode::Web)
-            && module.exports.iter().any(|export| export.name == "default")
-        {
-            bail!("exported symbol \"default\" not allowed for --target web")
+        for verify in self.verify.iter() {
+            match verify {
+                Verify::NoExport(name) => {
+                    if module.exports.iter().any(|e| &e.name == name) {
+                        bail!("exported symbol `{}` is not allowed for target", name);
+                    }
+                }
+            }
         }
 
         let thread_count = self
@@ -423,22 +472,24 @@ impl Bindgen {
             .unwrap();
         let mut cx = js::Context::new(&mut module, self, &adapters, &aux)?;
         cx.generate()?;
-        let (js, ts, start) = cx.finalize(stem)?;
-        let generated = Generated {
-            snippets: aux.snippets.clone(),
-            local_modules: aux.local_modules.clone(),
-            mode: self.mode.clone(),
-            typescript: self.typescript,
-            npm_dependencies: cx.npm_dependencies.clone(),
-            js,
-            ts,
-            start,
-        };
+        cx.finalize()?;
+
+        // Initialization is just flat out tricky and not something we
+        // understand super well. To try to handle various issues that have come
+        // up we always remove the `start` function if one is present. The JS
+        // bindings glue then manually calls the start function (if it was
+        // previously present).
+        let needs_manual_start = cx.unstart_start_function();
+
+        let mut wrapper_output = self.wrapper.wrap(&cx, stem, needs_manual_start)?;
+        wrapper_output.snippets = aux.snippets.clone();
+        wrapper_output.local_modules = aux.local_modules.clone();
+        wrapper_output.npm_dependencies = cx.npm_dependencies.clone();
 
         Ok(Output {
             module,
             stem: stem.to_string(),
-            generated,
+            generated: wrapper_output,
         })
     }
 
@@ -529,37 +580,6 @@ fn demangle(module: &mut Module) {
     }
 }
 
-impl OutputMode {
-    fn uses_es_modules(&self) -> bool {
-        matches!(
-            self,
-            OutputMode::Bundler { .. }
-                | OutputMode::Web
-                | OutputMode::Node { module: true }
-                | OutputMode::Deno
-        )
-    }
-
-    fn nodejs(&self) -> bool {
-        matches!(self, OutputMode::Node { .. })
-    }
-
-    fn no_modules(&self) -> bool {
-        matches!(self, OutputMode::NoModules { .. })
-    }
-
-    fn web(&self) -> bool {
-        matches!(self, OutputMode::Web)
-    }
-
-    fn esm_integration(&self) -> bool {
-        matches!(
-            self,
-            OutputMode::Bundler { .. } | OutputMode::Node { module: true }
-        )
-    }
-}
-
 /// Remove a number of internal exports that are synthesized by Rust's linker,
 /// LLD. These exports aren't typically ever needed and just add extra space to
 /// the binary.
@@ -584,11 +604,7 @@ impl Output {
     }
 
     pub fn ts(&self) -> Option<&str> {
-        if self.generated.typescript {
-            Some(&self.generated.ts)
-        } else {
-            None
-        }
+        self.generated.ts.as_ref().map(String::as_str)
     }
 
     pub fn start(&self) -> Option<&String> {
@@ -676,7 +692,7 @@ impl Output {
 
             let start = gen.start.as_deref().unwrap_or("");
 
-            if matches!(gen.mode, OutputMode::Node { .. }) {
+            if matches!(gen.mode, Preset::Node { .. }) {
                 write(
                     &js_path,
                     format!(
